@@ -1,0 +1,118 @@
+spring:
+  application:
+    name: jobbeacon-notification
+  profiles:
+    active: ${PROFILE_ACTIVE:local}
+  liquibase:
+    enabled: ${LIQUIBASE_ENABLED:true}
+    change-log: classpath:/db/changelog/db.changelog-master.xml
+
+  # This service's own database: user contacts, notifications, deliveries, preferences, processed events.
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/job_notification}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+
+  messages:
+    basename: i18n/messages
+    encoding: UTF-8
+    fallback-to-system-locale: false
+
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:guest}
+    password: ${RABBITMQ_PASSWORD:guest}
+    listener:
+      simple:
+        # AUTO: the message is acked after the listener returns, i.e. after the handling transaction committed.
+        acknowledge-mode: auto
+        # A message that still fails after the retries is rejected without requeue, so it goes to the DLQ.
+        default-requeue-rejected: false
+        # Stateless retry in the listener thread. AmqpRejectAndDontRequeueException (bad payload) is not retried and
+        # goes to the DLQ on the first failure; see RabbitConfiguration#listenerRetryClassifier.
+        retry:
+          enabled: true
+          max-attempts: ${EVENT_MAX_ATTEMPTS:3}
+          initial-interval: 1s
+          multiplier: 2
+
+  task:
+    scheduling:
+      pool:
+        # The delivery worker and the SSE heartbeat run on separate threads, so a slow SMTP send cannot stall pings.
+        size: 2
+
+  mail:
+    host: ${MAIL_HOST:localhost}
+    port: ${MAIL_PORT:1025}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: ${MAIL_SMTP_AUTH:false}
+          starttls:
+            enable: ${MAIL_STARTTLS:false}
+          connectiontimeout: 5000
+          timeout: 10000
+          writetimeout: 10000
+
+app:
+  rabbitmq:
+    exchange: ${EVENTS_EXCHANGE:jobbeacon.events}
+    queue: ${EVENTS_QUEUE:notification.events}
+    dead-letter-exchange: ${EVENTS_DLX:notification.dlx}
+    dead-letter-queue: ${EVENTS_DLQ:notification.dlq}
+    routing-keys:
+      - user.upserted
+      - recommendation.job-match.digest
+      - user.registered
+  delivery:
+    enabled: ${DELIVERY_ENABLED:true}
+    poll-interval: ${DELIVERY_POLL_INTERVAL:PT5S}
+    batch-size: ${DELIVERY_BATCH_SIZE:50}
+    max-attempts: ${DELIVERY_MAX_ATTEMPTS:6}
+    # A claimed delivery is invisible to other polls for this long; a crash mid-send makes it retry after the lease.
+    lease: ${DELIVERY_LEASE:PT5M}
+    initial-backoff: ${DELIVERY_INITIAL_BACKOFF:PT30S}
+    max-backoff: ${DELIVERY_MAX_BACKOFF:PT1H}
+  mail:
+    from: ${MAIL_FROM:JobBeacon <no-reply@jobbeacon.local>}
+  frontend:
+    base-url: ${FRONTEND_BASE_URL:http://localhost:3000}
+  realtime:
+    # The emitter is closed after this; the FE reconnects and refetches. Keep it below any proxy limit you cannot change.
+    emitter-timeout: ${SSE_EMITTER_TIMEOUT:PT30M}
+    heartbeat-interval: ${SSE_HEARTBEAT_INTERVAL:PT25S}
+
+server:
+  port: ${PORT:8084}
+  servlet:
+    # The gateway forwards /jobbeacon-notification/** unchanged, like the other services.
+    context-path: /jobbeacon-notification
+
+logging:
+  level:
+    com.jobbeacon: INFO
+
+eureka:
+  client:
+    enabled: ${EUREKA_ENABLED:true}
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka/}
+  instance:
+    prefer-ip-address: true
